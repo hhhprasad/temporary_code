@@ -1,12 +1,18 @@
 #!/usr/bin/env python3
 
+"""
+this program will compare both json file values unordered , ordering does not matter here
+python compare_json_iterative.py C:/t1/f1.json C:/t1/f2.json --html-report C:/t1/report.html
+
+"""
+
+
 import json
 import argparse
 import sys
 import html
 from colorama import init, Fore, Style
 
-# Initialize colorama
 init(autoreset=True)
 
 def is_valid_json_file(file_path):
@@ -20,39 +26,62 @@ def is_valid_json_file(file_path):
     except Exception as e:
         return None, f"{Fore.RED}Error reading {file_path}: {e}"
 
-def normalize(value):
-    if isinstance(value, dict):
-        return {k: normalize(value[k]) for k in sorted(value)}
-    elif isinstance(value, list):
-        return sorted([normalize(v) for v in value], key=lambda x: json.dumps(x, sort_keys=True))
-    return value
+def normalize(data):
+    if isinstance(data, dict):
+        stack = [(data, {})]
+        result = {}
 
-def compare_json(json1, json2, path=""):
+        while stack:
+            current, normalized = stack.pop()
+            for key in sorted(current):
+                value = current[key]
+                if isinstance(value, dict):
+                    new_dict = {}
+                    normalized[key] = new_dict
+                    stack.append((value, new_dict))
+                elif isinstance(value, list):
+                    norm_list = sorted([normalize(v) for v in value], key=lambda x: json.dumps(x, sort_keys=True))
+                    normalized[key] = norm_list
+                else:
+                    normalized[key] = value
+        return normalized
+
+    elif isinstance(data, list):
+        return sorted([normalize(v) for v in data], key=lambda x: json.dumps(x, sort_keys=True))
+
+    return data
+
+def compare_json(json1, json2):
+    stack = [(json1, json2, "")]
     differences = []
 
-    if type(json1) != type(json2):
-        differences.append(("type", path, f"Type mismatch: {type(json1).__name__} vs {type(json2).__name__}"))
-        return differences
+    while stack:
+        val1, val2, path = stack.pop()
 
-    if isinstance(json1, dict):
-        keys = set(json1) | set(json2)
-        for key in keys:
-            new_path = f"{path}.{key}" if path else key
-            if key not in json1:
-                differences.append(("missing_key", new_path, "Missing in first JSON"))
-            elif key not in json2:
-                differences.append(("missing_key", new_path, "Missing in second JSON"))
-            else:
-                differences += compare_json(json1[key], json2[key], new_path)
+        if type(val1) != type(val2):
+            differences.append(("type", path, f"Type mismatch: {type(val1).__name__} vs {type(val2).__name__}"))
+            continue
 
-    elif isinstance(json1, list):
-        norm1 = normalize(json1)
-        norm2 = normalize(json2)
-        if norm1 != norm2:
-            differences.append(("list", path, f"List mismatch:\n  First: {norm1}\n  Second: {norm2}"))
-    else:
-        if json1 != json2:
-            differences.append(("value", path, f"{json1} vs {json2}"))
+        if isinstance(val1, dict):
+            keys = set(val1) | set(val2)
+            for key in keys:
+                new_path = f"{path}.{key}" if path else key
+                if key not in val1:
+                    differences.append(("missing_key", new_path, "Missing in first JSON"))
+                elif key not in val2:
+                    differences.append(("missing_key", new_path, "Missing in second JSON"))
+                else:
+                    stack.append((val1[key], val2[key], new_path))
+
+        elif isinstance(val1, list):
+            norm1 = normalize(val1)
+            norm2 = normalize(val2)
+            if norm1 != norm2:
+                differences.append(("list", path, f"List mismatch:\n  First: {norm1}\n  Second: {norm2}"))
+
+        else:
+            if val1 != val2:
+                differences.append(("value", path, f"{val1} vs {val2}"))
 
     return differences
 
@@ -73,14 +102,13 @@ def print_terminal_diffs(differences):
 def generate_html_report(differences, output_path):
     html_parts = [
         "<html><head><style>",
-        "body { font-family: sans-serif; padding: 1em; }",
-        ".diff { margin-bottom: 1em; border: 1px solid #ddd; border-radius: 5px; }",
-        "summary { font-weight: bold; padding: 0.4em; cursor: pointer; }",
-        ".missing_key summary { background: #ffe6e6; }",
-        ".type summary { background: #fff5cc; }",
-        ".value summary { background: #f0e6ff; }",
-        ".list summary { background: #e6f7ff; }",
-        ".message { padding: 0.5em 1em; white-space: pre-wrap; }",
+        "body { font-family: Arial; padding: 20px; }",
+        "details.diff { margin: 10px 0; padding: 10px; border-left: 5px solid #999; background: #f9f9f9; }",
+        ".diff.missing_key { border-color: red; }",
+        ".diff.type { border-color: orange; }",
+        ".diff.value { border-color: purple; }",
+        ".diff.list { border-color: teal; }",
+        ".message { white-space: pre-wrap; font-family: monospace; }",
         "</style><title>JSON Diff Report</title></head><body>",
         "<h1>JSON Diff Report</h1>"
     ]
@@ -90,8 +118,6 @@ def generate_html_report(differences, output_path):
     else:
         for diff_type, path, message in differences:
             message_html = html.escape(message)
-
-            # Add line breaks for 'list' and 'value'
             if diff_type in {"list", "value"}:
                 message_html = message_html.replace("First:", "<br><strong>First:</strong><br>")
                 message_html = message_html.replace("Second:", "<br><strong>Second:</strong><br>")
@@ -111,10 +137,9 @@ def generate_html_report(differences, output_path):
 
 def main():
     parser = argparse.ArgumentParser(description="Compare two JSON files (order-insensitive).")
-    parser.add_argument("file1", help="Path to the first JSON file")
-    parser.add_argument("file2", help="Path to the second JSON file")
-    parser.add_argument("--html-report", help="Optional path to save HTML report")
-
+    parser.add_argument("file1", help="Path to first JSON file")
+    parser.add_argument("file2", help="Path to second JSON file")
+    parser.add_argument("--html-report", help="Optional output path for HTML report")
     args = parser.parse_args()
 
     data1, err1 = is_valid_json_file(args.file1)
@@ -126,7 +151,6 @@ def main():
         sys.exit(1)
 
     differences = compare_json(data1, data2)
-
     print_terminal_diffs(differences)
 
     if args.html_report:
